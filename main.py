@@ -59,6 +59,7 @@ class TicketBot(commands.Bot):
             "cogs.access",
             "cogs.ai_qa",
             "cogs.comp",
+            "cogs.bounty_board",
         ]
 
         for cog in cogs:
