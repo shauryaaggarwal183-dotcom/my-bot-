@@ -52,14 +52,17 @@ class TicketBot(commands.Bot):
             logger.error(traceback.format_exc())
 
         # COGS
-        cogs = [
-            "cogs.tickets",
-            "cogs.admin",
-            "cogs.tier_test",
-            "cogs.access",
-            "cogs.ai_qa",
-            "cogs.comp",
-        ]
+cogs = [
+    "cogs.tickets",
+    "cogs.admin",
+    "cogs.tier_test",
+    "cogs.security",
+    "cogs.access",
+    "cogs.ai_qa",
+    "cogs.comp",
+]
+            
+   
 
         for cog in cogs:
             try:
