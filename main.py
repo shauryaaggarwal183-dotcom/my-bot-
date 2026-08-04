@@ -40,37 +40,34 @@ class TicketBot(commands.Bot):
     # =========================
     # SETUP HOOK
     # =========================
-    async def setup_hook(self):
-        logger.info("Starting bot setup...")
+ async def setup_hook(self):
+    logger.info("Starting bot setup...")
 
-        # DB INIT (SAFE)
+    try:
+        await self.db.init()
+        logger.info("Database initialized.")
+    except Exception:
+        logger.error("DB INIT FAILED")
+        logger.error(traceback.format_exc())
+
+    # COGS
+    cogs = [
+        "cogs.tickets",
+        "cogs.admin",
+        "cogs.tier_test",
+        "cogs.security",
+        "cogs.access",
+        "cogs.ai_qa",
+        "cogs.comp",
+    ]
+
+    for cog in cogs:
         try:
-            await self.db.init()
-            logger.info("Database initialized.")
+            await self.load_extension(cog)
+            logger.info(f"Loaded cog: {cog}")
         except Exception:
-            logger.error("DB INIT FAILED")
+            logger.error(f"FAILED TO LOAD COG: {cog}")
             logger.error(traceback.format_exc())
-
-        # COGS
-cogs = [
-    "cogs.tickets",
-    "cogs.admin",
-    "cogs.tier_test",
-    "cogs.security",
-    "cogs.access",
-    "cogs.ai_qa",
-    "cogs.comp",
-]
-            
-   
-
-        for cog in cogs:
-            try:
-                await self.load_extension(cog)
-                logger.info(f"Loaded cog: {cog}")
-            except Exception:
-                logger.error(f"FAILED TO LOAD COG: {cog}")
-                logger.error(traceback.format_exc())
 
         # SYNC COMMANDS
         try:
