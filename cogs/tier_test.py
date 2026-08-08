@@ -1547,93 +1547,112 @@ class TierSettingsView(discord.ui.View):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  TIER INFO  +  TIER RULES  —  static, professional reference panels
 #
-#  Two fully independent, permanent panels (#tier-info and #tier-rules), each
-#  a single embed + a persistent Select Menu. Picking an option replies with
-#  an ephemeral embed built from the content tables below — nothing here
-#  touches the ticket pipeline, the database, or any other cog.
+#  FOUR fully independent, permanent panels — Bedrock Info, Bedrock Rules,
+#  Java Info, Java Rules — each a single embed + a persistent Select Menu.
+#  Picking an option replies with an ephemeral embed built from the content
+#  tables below. Nothing here touches the ticket pipeline, the database, or
+#  any other cog.
 #
-#  Content lives in plain dicts (key -> (emoji, title, body)) so adding or
-#  editing a section later is a one-line change, not new classes.
+#  Everything is driven by a single `platform` key ('bedrock' / 'java') so
+#  the Bedrock and Java panels share one set of classes/functions instead of
+#  duplicating them — adding a 3rd platform later is a content-table entry,
+#  not new code.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-TIER_INFO_FOOTER = 'Bedrock Tier Testing'
-
-TIER_INFO_CONTENT: dict[str, tuple[str, str, str]] = {
-    'tier_system': (
-        '📊', 'Tier System',
-        (
-            "Every tier on this server is split into a **High** half and a "
-            "**Low** half:\n\n"
-            "🔺 **HT** = High Tier — the stronger half of a numbered tier\n"
-            "🔻 **LT** = Low Tier — the weaker half of a numbered tier\n\n"
-            "**Full Breakdown**\n"
-            "> `HT1` — High Tier 1  •  `LT1` — Low Tier 1\n"
-            "> `HT2` — High Tier 2  •  `LT2` — Low Tier 2\n"
-            "> `HT3` — High Tier 3  •  `LT3` — Low Tier 3\n"
-            "> `HT4` — High Tier 4  •  `LT4` — Low Tier 4\n"
-            "> `HT5` — High Tier 5  •  `LT5` — Low Tier 5\n\n"
-            "Tier 1 is the **highest** skill bracket and Tier 5 is the **lowest**. "
-            "Within any numbered tier, an HT player is considered stronger than an "
-            "LT player of that same number."
-        ),
-    ),
-    'tier_rankings': (
-        '🏆', 'Tier Rankings',
-        (
-            "Tiers rank from best to worst in this order:\n\n"
-            "**HT1 → LT1 → HT2 → LT2 → HT3 → LT3 → HT4 → LT4 → HT5 → LT5**\n\n"
-            "• Your rank reflects your **current, tested** skill level — not your "
-            "reputation or past results.\n"
-            "• Ranks can move **up or down** depending on how a test goes.\n"
-            "• Only official results recorded by a Tier Tester count toward your "
-            "rank.\n"
-            "• Rankings are **per gamemode** — you can hold a different tier in "
-            "each gamemode you've tested for."
-        ),
-    ),
-    'testing_info': (
-        '⚔️', 'Testing Information',
-        (
-            "**How a Tier Test works:**\n"
-            "1️⃣ Open a Tier Test request from the panel.\n"
-            "2️⃣ Choose your platform and gamemode(s).\n"
-            "3️⃣ A ticket is opened and a Tier Tester is assigned.\n"
-            "4️⃣ You'll play a set of matches against the tester.\n"
-            "5️⃣ The tester evaluates your **overall performance**, not a single "
-            "moment.\n"
-            "6️⃣ Your result is announced and recorded.\n\n"
-            "> ⚠️ Be respectful, be patient, and follow the tester's instructions "
-            "for the entire test."
-        ),
-    ),
-    'retest_info': (
-        '🔄', 'Retest Information',
-        (
-            "• You may request a **retest** once your cooldown period has passed.\n"
-            "• Retests are meant for players who genuinely believe they've "
-            "**improved** since their last result.\n"
-            "• Abusing the retest/ticket system can lead to an extended cooldown "
-            "or loss of testing privileges.\n"
-            "• A retest can end in a **promotion, demotion, or no change** — "
-            "results are never guaranteed."
-        ),
-    ),
-    'general_info': (
-        '📜', 'General Information',
-        (
-            "• All testing on this server is carried out by **verified Tier "
-            "Testers** only.\n"
-            "• Results are final unless reviewed and overturned by staff.\n"
-            "• Screenshots or recordings may be requested as evidence in a "
-            "dispute.\n"
-            "• Cheating, manipulating, or faking a result will result in "
-            "punishment.\n"
-            "• Anything not covered here can be asked about in a support ticket."
-        ),
-    ),
+TIER_PLATFORMS: dict[str, dict[str, str]] = {
+    'bedrock': {'label': 'Bedrock', 'emoji': '🟢'},
+    'java':    {'label': 'Java',    'emoji': '🍲'},
 }
 
-TIER_RULES_CONTENT: dict[str, tuple[str, str, str]] = {
+
+def _tier_footer(platform: str) -> str:
+    return f"{TIER_PLATFORMS[platform]['label']} Tier Testing"
+
+
+# key -> (emoji, title, body). Identical structure/wording for both
+# platforms except for the platform name itself, so it's generated once
+# per platform below rather than typed out twice.
+def _build_info_content(platform: str) -> dict[str, tuple[str, str, str]]:
+    label = TIER_PLATFORMS[platform]['label']
+    return {
+        'tier_system': (
+            '📊', 'Tier System',
+            (
+                f"Every tier on **{label} Edition** is split into a **High** half "
+                "and a **Low** half:\n\n"
+                "🔺 **HT** = High Tier — the stronger half of a numbered tier\n"
+                "🔻 **LT** = Low Tier — the weaker half of a numbered tier\n\n"
+                "**Full Breakdown**\n"
+                "> `HT1` — High Tier 1  •  `LT1` — Low Tier 1\n"
+                "> `HT2` — High Tier 2  •  `LT2` — Low Tier 2\n"
+                "> `HT3` — High Tier 3  •  `LT3` — Low Tier 3\n"
+                "> `HT4` — High Tier 4  •  `LT4` — Low Tier 4\n"
+                "> `HT5` — High Tier 5  •  `LT5` — Low Tier 5\n\n"
+                "Tier 1 is the **highest** skill bracket and Tier 5 is the "
+                "**lowest**. Within any numbered tier, an HT player is considered "
+                "stronger than an LT player of that same number."
+            ),
+        ),
+        'tier_rankings': (
+            '🏆', 'Tier Rankings',
+            (
+                f"{label} Edition tiers rank from best to worst in this order:\n\n"
+                "**HT1 → LT1 → HT2 → LT2 → HT3 → LT3 → HT4 → LT4 → HT5 → LT5**\n\n"
+                "• Your rank reflects your **current, tested** skill level — not "
+                "your reputation or past results.\n"
+                "• Ranks can move **up or down** depending on how a test goes.\n"
+                "• Only official results recorded by a Tier Tester count toward "
+                "your rank.\n"
+                "• Rankings are **per gamemode** — you can hold a different tier "
+                "in each gamemode you've tested for."
+            ),
+        ),
+        'testing_info': (
+            '⚔️', 'Testing Information',
+            (
+                f"**How a {label} Tier Test works:**\n"
+                "1️⃣ Open a Tier Test request from the panel.\n"
+                f"2️⃣ Choose **{label} Edition** and your gamemode(s).\n"
+                "3️⃣ A ticket is opened and a Tier Tester is assigned.\n"
+                "4️⃣ You'll play a set of matches against the tester.\n"
+                "5️⃣ The tester evaluates your **overall performance**, not a "
+                "single moment.\n"
+                "6️⃣ Your result is announced and recorded.\n\n"
+                "> ⚠️ Be respectful, be patient, and follow the tester's "
+                "instructions for the entire test."
+            ),
+        ),
+        'retest_info': (
+            '🔄', 'Retest Information',
+            (
+                "• You may request a **retest** once your cooldown period has "
+                "passed.\n"
+                "• Retests are meant for players who genuinely believe they've "
+                "**improved** since their last result.\n"
+                "• Abusing the retest/ticket system can lead to an extended "
+                "cooldown or loss of testing privileges.\n"
+                "• A retest can end in a **promotion, demotion, or no change** — "
+                "results are never guaranteed."
+            ),
+        ),
+        'general_info': (
+            '📜', 'General Information',
+            (
+                f"• All {label} Edition testing on this server is carried out by "
+                "**verified Tier Testers** only.\n"
+                "• Results are final unless reviewed and overturned by staff.\n"
+                "• Screenshots or recordings may be requested as evidence in a "
+                "dispute.\n"
+                "• Cheating, manipulating, or faking a result will result in "
+                "punishment.\n"
+                "• Anything not covered here can be asked about in a support "
+                "ticket."
+            ),
+        ),
+    }
+
+
+_GENERAL_RULES: dict[str, tuple[str, str, str]] = {
     'important_rules': (
         '📌', 'Important Rules',
         (
@@ -1668,6 +1687,11 @@ TIER_RULES_CONTENT: dict[str, tuple[str, str, str]] = {
             "stopped, or reviewed."
         ),
     ),
+}
+
+# Gamemode-specific rules — Bedrock and Java each get their own set, matching
+# the gamemodes actually used for that platform elsewhere in this file.
+_BEDROCK_GAMEMODE_RULES: dict[str, tuple[str, str, str]] = {
     'sword': (
         '🗡️', 'Sword Rules',
         (
@@ -1754,26 +1778,176 @@ TIER_RULES_CONTENT: dict[str, tuple[str, str, str]] = {
     ),
 }
 
+_JAVA_GAMEMODE_RULES: dict[str, tuple[str, str, str]] = {
+    'sword': (
+        '⚔️', 'Sword PvP Rules',
+        (
+            "• No hacked clients — killaura, reach, or velocity modifications are "
+            "banned.\n"
+            "• Combos must be performed manually — no auto-clickers or macros.\n"
+            "• Knockback must match the server's default configuration.\n"
+            "• The tester's arena and ruleset apply for the entire test."
+        ),
+    ),
+    'nethpot': (
+        '🧪', 'Nethpot Rules',
+        (
+            "• Standard Nethpot potion loadout only — no illegal potion "
+            "combinations.\n"
+            "• No hacked clients, killaura, or auto-potting macros.\n"
+            "• Combo consistency and potion timing are key evaluation factors.\n"
+            "• The tester's arena and ruleset apply for the entire test."
+        ),
+    ),
+    'axe': (
+        '🪓', 'Axe Rules',
+        (
+            "• No hacked clients — reach, killaura, or velocity modifications are "
+            "banned.\n"
+            "• Axe cooldown timing must not be bypassed with macros.\n"
+            "• Spacing and combo timing are the main skills evaluated.\n"
+            "• Standard arena boundaries apply for the entire test."
+        ),
+    ),
+    'dia_pot': (
+        '💎', 'Dia Pot Rules',
+        (
+            "• Standard diamond-armor potion loadout only.\n"
+            "• No hacked clients, killaura, or auto-potting macros.\n"
+            "• Combo consistency and potion timing are key evaluation factors.\n"
+            "• The tester's arena and ruleset apply for the entire test."
+        ),
+    ),
+    'mace': (
+        '🔨', 'Mace Rules',
+        (
+            "• Mace wind-charge timing must be performed manually — no macros.\n"
+            "• No hacked clients or velocity modifications.\n"
+            "• Standard arena boundaries apply; leaving the arena may forfeit the "
+            "round.\n"
+            "• The tester's arena and ruleset apply for the entire test."
+        ),
+    ),
+    'spear_mace': (
+        '🔱', 'Spear Mace Rules',
+        (
+            "• Spear and mace combos must both be performed manually — no "
+            "macros.\n"
+            "• No hacked clients or velocity modifications.\n"
+            "• Standard arena boundaries apply for the entire test.\n"
+            "• The tester's ruleset applies for the entire test."
+        ),
+    ),
+    'cart_pvp': (
+        '🛒', 'Cart PvP Rules',
+        (
+            "• No hacked clients, killaura, or reach modifications.\n"
+            "• Minecart placement/removal must follow the tester's map rules.\n"
+            "• Combos while cart-fighting are a primary evaluation factor.\n"
+            "• The tester's arena and ruleset apply for the entire test."
+        ),
+    ),
+    'build_uhc': (
+        '🏗️', 'Build UHC Rules',
+        (
+            "• No-heal UHC combat rules apply — natural regeneration only.\n"
+            "• Building must be functional (safe boxing/bridging), not "
+            "exploit-based.\n"
+            "• No block-clipping, phasing, or building-related glitches.\n"
+            "• Combat awareness, build speed, and resource usage are all "
+            "evaluated."
+        ),
+    ),
+    'crystal': (
+        '💠', 'Crystal PvP Rules',
+        (
+            "• No hacked clients — crystal aura, auto-crystal, or reach "
+            "modifications are banned.\n"
+            "• Crystal placement/breaking timing must be performed manually.\n"
+            "• Standard arena boundaries apply for the entire test.\n"
+            "• The tester's ruleset applies for the entire test."
+        ),
+    ),
+    'smp_pvp': (
+        '🌍', 'SMP PvP Rules',
+        (
+            "• Standard SMP gear/potion loadout only.\n"
+            "• No hacked clients, killaura, or reach modifications.\n"
+            "• Combos, spacing, and resource usage are all evaluated.\n"
+            "• The tester's arena and ruleset apply for the entire test."
+        ),
+    ),
+}
 
-def _tier_info_embed(key: str) -> discord.Embed:
-    emoji, title, body = TIER_INFO_CONTENT[key]
+_GAMEMODE_RULES_BY_PLATFORM = {
+    'bedrock': _BEDROCK_GAMEMODE_RULES,
+    'java': _JAVA_GAMEMODE_RULES,
+}
+
+
+def _build_rules_content(platform: str) -> dict[str, tuple[str, str, str]]:
+    return {**_GENERAL_RULES, **_GAMEMODE_RULES_BY_PLATFORM[platform]}
+
+
+# Built once at import time — static content, no need to rebuild per call.
+TIER_INFO_CONTENT: dict[str, dict[str, tuple[str, str, str]]] = {
+    platform: _build_info_content(platform) for platform in TIER_PLATFORMS
+}
+TIER_RULES_CONTENT: dict[str, dict[str, tuple[str, str, str]]] = {
+    platform: _build_rules_content(platform) for platform in TIER_PLATFORMS
+}
+
+# Rules select menu options per platform (label, value, emoji) — order here
+# is the order shown in the dropdown.
+_RULES_OPTIONS_BY_PLATFORM: dict[str, list[tuple[str, str, str]]] = {
+    'bedrock': [
+        ('Important Rules', 'important_rules', '📌'),
+        ('General Testing Rules', 'general_testing_rules', '⚔️'),
+        ('Sword', 'sword', '🗡️'),
+        ('Bedfight', 'bedfight', '🛏️'),
+        ('Boxing', 'boxing', '🥊'),
+        ('NoDebuff', 'nodebuff', '🧪'),
+        ('SkyWars', 'skywars', '🌀'),
+        ('Survival Games', 'survival_games', '🌳'),
+        ('Build UHC', 'build_uhc', '🏗️'),
+        ('Midfight', 'midfight', '🌉'),
+    ],
+    'java': [
+        ('Important Rules', 'important_rules', '📌'),
+        ('General Testing Rules', 'general_testing_rules', '⚔️'),
+        ('Sword', 'sword', '⚔️'),
+        ('Nethpot', 'nethpot', '🧪'),
+        ('Axe', 'axe', '🪓'),
+        ('Dia Pot', 'dia_pot', '💎'),
+        ('Mace', 'mace', '🔨'),
+        ('Spear Mace', 'spear_mace', '🔱'),
+        ('Cart PvP', 'cart_pvp', '🛒'),
+        ('Build UHC', 'build_uhc', '🏗️'),
+        ('Crystal', 'crystal', '💠'),
+        ('SMP PvP', 'smp_pvp', '🌍'),
+    ],
+}
+
+
+def _tier_info_embed(platform: str, key: str) -> discord.Embed:
+    emoji, title, body = TIER_INFO_CONTENT[platform][key]
     e = discord.Embed(title=f'{emoji}  {title}', description=body,
                       color=PURPLE, timestamp=datetime.now(timezone.utc))
-    e.set_footer(text=TIER_INFO_FOOTER)
+    e.set_footer(text=_tier_footer(platform))
     return e
 
 
-def _tier_rules_embed(key: str) -> discord.Embed:
-    emoji, title, body = TIER_RULES_CONTENT[key]
+def _tier_rules_embed(platform: str, key: str) -> discord.Embed:
+    emoji, title, body = TIER_RULES_CONTENT[platform][key]
     e = discord.Embed(title=f'{emoji}  {title}', description=body,
                       color=PURPLE, timestamp=datetime.now(timezone.utc))
-    e.set_footer(text=TIER_INFO_FOOTER)
+    e.set_footer(text=_tier_footer(platform))
     return e
 
 
 async def _safe_ephemeral(interaction: discord.Interaction, embed: discord.Embed) -> None:
     """Reply with an ephemeral embed no matter what state the interaction is
-    in — used by both dropdown callbacks so a slow client, a double-click, or
+    in — used by every dropdown callback so a slow client, a double-click, or
     an already-expired interaction can never raise an unhandled exception."""
     try:
         if interaction.response.is_done():
@@ -1788,10 +1962,12 @@ async def _safe_ephemeral(interaction: discord.Interaction, embed: discord.Embed
 
 
 class TierInfoSelect(discord.ui.Select):
-    """Persistent select for #tier-info. Options are static, so this survives
-    bot restarts as long as the view is re-registered via bot.add_view()."""
+    """Persistent select for a #tier-info panel. Options are static per
+    platform, so this survives bot restarts as long as the matching view is
+    re-registered via bot.add_view() (see TierPanel.__init__ below)."""
 
-    def __init__(self):
+    def __init__(self, platform: str):
+        self.platform = platform
         options = [
             discord.SelectOption(label='Tier System', value='tier_system', emoji='📊',
                                   description='What HT / LT and each tier number means'),
@@ -1805,16 +1981,16 @@ class TierInfoSelect(discord.ui.Select):
                                   description='General notes about the system'),
         ]
         super().__init__(
-            placeholder='📂 Select a category to learn more...',
+            placeholder=f"📂 Select a category to learn more about {TIER_PLATFORMS[platform]['label']}...",
             min_values=1, max_values=1,
             options=options,
-            custom_id='tier_info:select',
+            custom_id=f'tier_info:{platform}:select',
         )
 
     async def callback(self, interaction: discord.Interaction):
         try:
             key = self.values[0]
-            embed = _tier_info_embed(key)
+            embed = _tier_info_embed(self.platform, key)
         except (IndexError, KeyError):
             embed = E.error('That option is no longer available. Please try again.')
         except Exception:
@@ -1824,40 +2000,34 @@ class TierInfoSelect(discord.ui.Select):
 
 
 class TierInfoView(discord.ui.View):
-    """Public, permanent panel for #tier-info — a single Select Menu."""
+    """Public, permanent panel for a #tier-info channel — a single Select
+    Menu scoped to one platform (Bedrock or Java)."""
 
-    def __init__(self):
+    def __init__(self, platform: str):
         super().__init__(timeout=None)
-        self.add_item(TierInfoSelect())
+        self.add_item(TierInfoSelect(platform))
 
 
 class TierRulesSelect(discord.ui.Select):
-    """Persistent select for #tier-rules."""
+    """Persistent select for a #tier-rules panel, scoped to one platform."""
 
-    def __init__(self):
+    def __init__(self, platform: str):
+        self.platform = platform
         options = [
-            discord.SelectOption(label='Important Rules', value='important_rules', emoji='📌'),
-            discord.SelectOption(label='General Testing Rules', value='general_testing_rules', emoji='⚔️'),
-            discord.SelectOption(label='Sword', value='sword', emoji='🗡️'),
-            discord.SelectOption(label='Bedfight', value='bedfight', emoji='🛏️'),
-            discord.SelectOption(label='Boxing', value='boxing', emoji='🥊'),
-            discord.SelectOption(label='NoDebuff', value='nodebuff', emoji='🧪'),
-            discord.SelectOption(label='SkyWars', value='skywars', emoji='🌀'),
-            discord.SelectOption(label='Survival Games', value='survival_games', emoji='🌳'),
-            discord.SelectOption(label='Build UHC', value='build_uhc', emoji='🏗️'),
-            discord.SelectOption(label='Midfight', value='midfight', emoji='🌉'),
+            discord.SelectOption(label=label, value=value, emoji=emoji)
+            for label, value, emoji in _RULES_OPTIONS_BY_PLATFORM[platform]
         ]
         super().__init__(
-            placeholder='📂 Select a category to view the rules...',
+            placeholder=f"📂 Select a category to view {TIER_PLATFORMS[platform]['label']} rules...",
             min_values=1, max_values=1,
             options=options,
-            custom_id='tier_rules:select',
+            custom_id=f'tier_rules:{platform}:select',
         )
 
     async def callback(self, interaction: discord.Interaction):
         try:
             key = self.values[0]
-            embed = _tier_rules_embed(key)
+            embed = _tier_rules_embed(self.platform, key)
         except (IndexError, KeyError):
             embed = E.error('That option is no longer available. Please try again.')
         except Exception:
@@ -1867,37 +2037,40 @@ class TierRulesSelect(discord.ui.Select):
 
 
 class TierRulesView(discord.ui.View):
-    """Public, permanent panel for #tier-rules — a single Select Menu."""
+    """Public, permanent panel for a #tier-rules channel — a single Select
+    Menu scoped to one platform (Bedrock or Java)."""
 
-    def __init__(self):
+    def __init__(self, platform: str):
         super().__init__(timeout=None)
-        self.add_item(TierRulesSelect())
+        self.add_item(TierRulesSelect(platform))
 
 
-def tier_info_panel_embed() -> discord.Embed:
+def tier_info_panel_embed(platform: str) -> discord.Embed:
+    label = TIER_PLATFORMS[platform]['label']
     e = discord.Embed(
-        title='🏆 Bedrock Tier Information',
+        title=f'🏆 {label} Tier Information',
         description=(
-            'Welcome to the Bedrock Tier Testing system.\n'
+            f'Welcome to the {label} Tier Testing system.\n'
             'Select a category below to learn about tiers, rankings, testing and '
             'retesting.'
         ),
         color=PURPLE,
         timestamp=datetime.now(timezone.utc),
     )
-    e.set_footer(text=TIER_INFO_FOOTER)
+    e.set_footer(text=_tier_footer(platform))
     return e
 
 
-def tier_rules_panel_embed() -> discord.Embed:
+def tier_rules_panel_embed(platform: str) -> discord.Embed:
+    label = TIER_PLATFORMS[platform]['label']
     e = discord.Embed(
-        title='📜 Bedrock Tier Rules',
-        description='Select a category below to view the rules for Bedrock tier '
+        title=f'📜 {label} Tier Rules',
+        description=f'Select a category below to view the rules for {label} tier '
                     'testing.',
         color=PURPLE,
         timestamp=datetime.now(timezone.utc),
     )
-    e.set_footer(text=TIER_INFO_FOOTER)
+    e.set_footer(text=_tier_footer(platform))
     return e
 
 
@@ -1911,10 +2084,12 @@ class TierPanel(commands.Cog, name='TierTest'):
         bot.add_view(TierPanelView(bot, kind='apply'))
         bot.add_view(TierTestPanelView(bot))
         # Tier Info / Tier Rules panels are fully static (no per-guild state),
-        # so a single shared view instance can be registered once here and
-        # will keep working for every guild after a restart.
-        bot.add_view(TierInfoView())
-        bot.add_view(TierRulesView())
+        # so one shared view instance per platform can be registered once
+        # here and will keep working for every guild after a restart.
+        bot.add_view(TierInfoView('bedrock'))
+        bot.add_view(TierInfoView('java'))
+        bot.add_view(TierRulesView('bedrock'))
+        bot.add_view(TierRulesView('java'))
         # NOTE: TicketControlView is already registered persistently by TicketsCog,
         # so it is not re-registered here to avoid touching that flow.
 
@@ -1922,22 +2097,33 @@ class TierPanel(commands.Cog, name='TierTest'):
     async def tierpanel(self, interaction: discord.Interaction):
         if not await require_admin_or_owner(self.bot, interaction):
             return
+        # Deferred ephemerally FIRST, then the real panel is posted as a plain
+        # channel message — so Discord never tags it with "Username used
+        # /tierpanel" publicly above the panel.
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         settings = await get_tier_settings(self.bot, interaction.guild_id)
         embed = await tier_panel_embed(self.bot, interaction.guild)
         view = TierPanelView(self.bot, kind='apply')
 
-        if settings.get('banner_url'):
-            # Using a custom banner URL — no file attachment needed.
-            await interaction.response.send_message(embed=embed, view=view)
-            return
-
         try:
-            file = discord.File(BANNER_PATH, filename=BANNER_FILENAME)
-            await interaction.response.send_message(embed=embed, view=view, file=file)
-        except FileNotFoundError:
-            logger.warning(f'Banner image not found at {BANNER_PATH}, sending without image.')
-            embed.set_image(url=None)
-            await interaction.response.send_message(embed=embed, view=view)
+            if settings.get('banner_url'):
+                # Using a custom banner URL — no file attachment needed.
+                await interaction.channel.send(embed=embed, view=view)
+            else:
+                try:
+                    file = discord.File(BANNER_PATH, filename=BANNER_FILENAME)
+                    await interaction.channel.send(embed=embed, view=view, file=file)
+                except FileNotFoundError:
+                    logger.warning(f'Banner image not found at {BANNER_PATH}, sending without image.')
+                    embed.set_image(url=None)
+                    await interaction.channel.send(embed=embed, view=view)
+        except discord.Forbidden:
+            return await interaction.followup.send(
+                embed=E.error("I don't have permission to send messages in this channel."),
+                ephemeral=True
+            )
+        await interaction.followup.send(embed=E.success('Tier Tester panel posted.'), ephemeral=True)
 
     # ── /tiertestpanel — post the "request YOUR tier be tested" panel ─────────
     # Same UI/emojis/gamemode lists as /tierpanel, different questions asked
@@ -1946,21 +2132,30 @@ class TierPanel(commands.Cog, name='TierTest'):
     async def tiertestpanel(self, interaction: discord.Interaction):
         if not await require_admin_or_owner(self.bot, interaction):
             return
+        # Same silent-post pattern as /tierpanel above.
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         settings = await get_tier_settings(self.bot, interaction.guild_id)
         embed = await tier_test_panel_embed(self.bot, interaction.guild)
         view = TierTestPanelView(self.bot)
 
-        if settings.get('banner_url'):
-            await interaction.response.send_message(embed=embed, view=view)
-            return
-
         try:
-            file = discord.File(BANNER_PATH, filename=BANNER_FILENAME)
-            await interaction.response.send_message(embed=embed, view=view, file=file)
-        except FileNotFoundError:
-            logger.warning(f'Banner image not found at {BANNER_PATH}, sending without image.')
-            embed.set_image(url=None)
-            await interaction.response.send_message(embed=embed, view=view)
+            if settings.get('banner_url'):
+                await interaction.channel.send(embed=embed, view=view)
+            else:
+                try:
+                    file = discord.File(BANNER_PATH, filename=BANNER_FILENAME)
+                    await interaction.channel.send(embed=embed, view=view, file=file)
+                except FileNotFoundError:
+                    logger.warning(f'Banner image not found at {BANNER_PATH}, sending without image.')
+                    embed.set_image(url=None)
+                    await interaction.channel.send(embed=embed, view=view)
+        except discord.Forbidden:
+            return await interaction.followup.send(
+                embed=E.error("I don't have permission to send messages in this channel."),
+                ephemeral=True
+            )
+        await interaction.followup.send(embed=E.success('Tier Test request panel posted.'), ephemeral=True)
 
     # /tiersettings — quick legacy toggle, still works exactly as before.
     @app_commands.command(name='tiersettings', description='(Admin/Owner only) Quickly toggle Java/Bedrock Tier Tester applications on-off.')
@@ -1992,9 +2187,8 @@ class TierPanel(commands.Cog, name='TierTest'):
         embed = tier_admin_embed(interaction.guild, settings, java_gm, bedrock_gm, default_cd)
         await interaction.response.send_message(embed=embed, view=TierAdminPanelView(self.bot), ephemeral=True)
 
-    # ── /sendtierinfo — post the permanent Tier Information panel ─────────────
-    @app_commands.command(name='sendtierinfo', description='(Admin/Owner only) Post the permanent Bedrock Tier Information panel in this channel.')
-    async def sendtierinfo(self, interaction: discord.Interaction):
+    # ── shared helpers used by all 4 sendtier___ commands below ────────────────
+    async def _post_tier_info_panel(self, interaction: discord.Interaction, platform: str):
         if not await require_admin_or_owner(self.bot, interaction):
             return
         if interaction.channel is None or not hasattr(interaction.channel, 'send'):
@@ -2002,27 +2196,31 @@ class TierPanel(commands.Cog, name='TierTest'):
                 embed=E.error('This command can only be used in a text channel.'),
                 ephemeral=True
             )
+        # Deferred ephemerally FIRST, then the panel is posted as a plain
+        # channel message — so Discord never tags it with "Username used
+        # /sendtierinfo..." publicly above the panel.
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        label = TIER_PLATFORMS[platform]['label']
         try:
-            await interaction.response.send_message(
-                embed=tier_info_panel_embed(),
-                view=TierInfoView()
+            await interaction.channel.send(
+                embed=tier_info_panel_embed(platform),
+                view=TierInfoView(platform)
             )
         except discord.Forbidden:
-            await interaction.followup.send(
+            return await interaction.followup.send(
                 embed=E.error("I don't have permission to send messages in this channel."),
                 ephemeral=True
             )
         except discord.HTTPException:
             logger.exception('[sendtierinfo] failed to send panel')
-            embed = E.error('Failed to send the Tier Information panel. Please try again.')
-            if interaction.response.is_done():
-                await interaction.followup.send(embed=embed, ephemeral=True)
-            else:
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+            return await interaction.followup.send(
+                embed=E.error(f'Failed to send the {label} Tier Information panel. Please try again.'),
+                ephemeral=True
+            )
+        await interaction.followup.send(
+            embed=E.success(f'{label} Tier Information panel posted.'), ephemeral=True)
 
-    # ── /sendtierrules — post the permanent Tier Rules panel ──────────────────
-    @app_commands.command(name='sendtierrules', description='(Admin/Owner only) Post the permanent Bedrock Tier Rules panel in this channel.')
-    async def sendtierrules(self, interaction: discord.Interaction):
+    async def _post_tier_rules_panel(self, interaction: discord.Interaction, platform: str):
         if not await require_admin_or_owner(self.bot, interaction):
             return
         if interaction.channel is None or not hasattr(interaction.channel, 'send'):
@@ -2030,23 +2228,47 @@ class TierPanel(commands.Cog, name='TierTest'):
                 embed=E.error('This command can only be used in a text channel.'),
                 ephemeral=True
             )
+        # Same silent-post pattern as _post_tier_info_panel above.
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        label = TIER_PLATFORMS[platform]['label']
         try:
-            await interaction.response.send_message(
-                embed=tier_rules_panel_embed(),
-                view=TierRulesView()
+            await interaction.channel.send(
+                embed=tier_rules_panel_embed(platform),
+                view=TierRulesView(platform)
             )
         except discord.Forbidden:
-            await interaction.followup.send(
+            return await interaction.followup.send(
                 embed=E.error("I don't have permission to send messages in this channel."),
                 ephemeral=True
             )
         except discord.HTTPException:
             logger.exception('[sendtierrules] failed to send panel')
-            embed = E.error('Failed to send the Tier Rules panel. Please try again.')
-            if interaction.response.is_done():
-                await interaction.followup.send(embed=embed, ephemeral=True)
-            else:
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+            return await interaction.followup.send(
+                embed=E.error(f'Failed to send the {label} Tier Rules panel. Please try again.'),
+                ephemeral=True
+            )
+        await interaction.followup.send(
+            embed=E.success(f'{label} Tier Rules panel posted.'), ephemeral=True)
+
+    # ── /sendtierinfo — post the permanent BEDROCK Tier Information panel ─────
+    @app_commands.command(name='sendtierinfo', description='(Admin/Owner only) Post the permanent Bedrock Tier Information panel in this channel.')
+    async def sendtierinfo(self, interaction: discord.Interaction):
+        await self._post_tier_info_panel(interaction, 'bedrock')
+
+    # ── /sendtierrules — post the permanent BEDROCK Tier Rules panel ──────────
+    @app_commands.command(name='sendtierrules', description='(Admin/Owner only) Post the permanent Bedrock Tier Rules panel in this channel.')
+    async def sendtierrules(self, interaction: discord.Interaction):
+        await self._post_tier_rules_panel(interaction, 'bedrock')
+
+    # ── /sendtierinfojava — post the permanent JAVA Tier Information panel ────
+    @app_commands.command(name='sendtierinfojava', description='(Admin/Owner only) Post the permanent Java Tier Information panel in this channel.')
+    async def sendtierinfojava(self, interaction: discord.Interaction):
+        await self._post_tier_info_panel(interaction, 'java')
+
+    # ── /sendtierrulesjava — post the permanent JAVA Tier Rules panel ─────────
+    @app_commands.command(name='sendtierrulesjava', description='(Admin/Owner only) Post the permanent Java Tier Rules panel in this channel.')
+    async def sendtierrulesjava(self, interaction: discord.Interaction):
+        await self._post_tier_rules_panel(interaction, 'java')
 
 
 async def setup(bot):

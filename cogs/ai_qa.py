@@ -298,17 +298,21 @@ class AIQACog(commands.Cog, name="AI Q&A"):
     @aiqa.command(name="ask", description="Directly ask the AI anything.")
     @app_commands.describe(question="Your question")
     async def aiqa_ask(self, interaction: discord.Interaction, question: str):
-        await interaction.response.defer(thinking=True)
+        # Deferred ephemeral first, then the real answer is posted as a plain
+        # channel message — so Discord never tags it with "Username used
+        # /aiqa ask" publicly above the answer.
+        await interaction.response.defer(ephemeral=True, thinking=True)
         answer = await self._ask_ai(question, interaction.user.display_name, interaction.guild)
         if not answer:
             await interaction.followup.send(
-                embed=E.error("Couldn't reach the AI service right now. Try again in a bit.")
+                embed=E.error("Couldn't reach the AI service right now. Try again in a bit."),
+                ephemeral=True
             )
             return
         chunks = list(self._chunks(answer, MAX_REPLY_CHARS))
-        await interaction.followup.send(chunks[0])
-        for chunk in chunks[1:]:
-            await interaction.followup.send(chunk)
+        for chunk in chunks:
+            await interaction.channel.send(chunk)
+        await interaction.followup.send(embed=E.success('Answered.'), ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

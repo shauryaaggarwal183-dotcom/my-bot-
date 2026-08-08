@@ -452,7 +452,7 @@ class AdminCog(commands.Cog, name='Admin'):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     # ── /blacklist ─────────────────────────────────────────────────────────────
-    app_commands.command(name='blacklist', description='Blacklist a user from creating tickets.')
+    @app_commands.command(name='blacklist', description='Blacklist a user from creating tickets.')
     @app_commands.describe(user='User to blacklist', reason='Reason for blacklisting')
     async def blacklist(self, interaction: discord.Interaction,
                         user: discord.Member, reason: str = ''):

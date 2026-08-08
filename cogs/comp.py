@@ -1877,7 +1877,10 @@ class CompFight(commands.Cog, name='CompFight'):
             return await interaction.response.send_message(embed=E.error(f'Edition must be one of: {", ".join(EDITIONS)}'), ephemeral=True)
         top = max(1, min(top, 25))
         rows = await get_leaderboard(self.bot, interaction.guild_id, edition, gamemode, top)
-        await interaction.response.send_message(embed=leaderboard_embed(interaction.guild, edition, gamemode, rows))
+        # Posted as a plain channel message (not interaction.response) so
+        # Discord doesn't tag it with "Username used /compleaderboard" above it.
+        await interaction.response.send_message(embed=E.success('Leaderboard posted.'), ephemeral=True)
+        await interaction.channel.send(embed=leaderboard_embed(interaction.guild, edition, gamemode, rows))
 
     @compleaderboard.autocomplete('edition')
     async def leaderboard_edition_autocomplete(self, interaction: discord.Interaction, current: str):

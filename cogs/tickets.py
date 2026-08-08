@@ -874,7 +874,10 @@ class TicketsCog(commands.Cog, name='Tickets'):
 
         await interaction.channel.set_permissions(user, view_channel=True,
                                                    send_messages=True, read_message_history=True)
-        await interaction.response.send_message(
+        # Posted as a plain channel message (not interaction.response) so
+        # Discord doesn't tag it with "Username used /add" above the notice.
+        await interaction.response.send_message(embed=E.success('User added.'), ephemeral=True)
+        await interaction.channel.send(
             embed=E.success(f'{user.mention} has been added to this ticket.'))
 
     # ── /remove ────────────────────────────────────────────────────────────────
@@ -894,7 +897,10 @@ class TicketsCog(commands.Cog, name='Tickets'):
                 embed=E.error('Cannot remove the ticket owner.'), ephemeral=True)
 
         await interaction.channel.set_permissions(user, view_channel=False)
-        await interaction.response.send_message(
+        # Posted as a plain channel message (not interaction.response) so
+        # Discord doesn't tag it with "Username used /remove" above the notice.
+        await interaction.response.send_message(embed=E.success('User removed.'), ephemeral=True)
+        await interaction.channel.send(
             embed=E.success(f'{user.mention} has been removed from this ticket.'))
 
 
