@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 import aiosqlite
@@ -964,6 +965,610 @@ def tier_manage_embed(tiers: list[str]) -> discord.Embed:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  COMP INFO / COMP RULES — public, permanent, dropdown-driven panels.
+#
+#  Modeled on Tier Testing's #tier-info / #tier-rules system (cogs/tier_test.py)
+#  so both systems feel identical to use, but upgraded for Comp Fight:
+#  gamemode-specific rules are pulled LIVE from each server's own
+#  comp_gamemodes table instead of being hardcoded, so admin-added/renamed
+#  gamemodes automatically get a rules entry — nothing to edit here when a
+#  server customizes its gamemode list from /compadminpanel.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+COMP_PLATFORMS: dict[str, dict[str, str]] = {
+    'bedrock': {'label': 'Bedrock', 'emoji': '🟦', 'edition': 'Bedrock Edition'},
+    'java':    {'label': 'Java',    'emoji': '🟩', 'edition': 'Java Edition'},
+}
+
+
+def _comp_footer(platform: str) -> str:
+    return f"{COMP_PLATFORMS[platform]['label']} Comp Fight"
+
+
+def _slugify(name: str) -> str:
+    """'Dia Pot' -> 'dia_pot' — used as a stable SelectOption value for a
+    gamemode so renames don't break anything (falls back to error text if a
+    gamemode is later removed while a panel is still posted)."""
+    slug = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+    return slug or 'gamemode'
+
+
+# key -> (emoji, title, body). Content references the module's real tunables
+# (DODGE_THRESHOLD etc.) so this panel never drifts out of sync with how the
+# system actually behaves.
+def _build_comp_info_content(platform: str) -> dict[str, tuple[str, str, str]]:
+    label = COMP_PLATFORMS[platform]['label']
+    return {
+        'how_it_works': (
+            '⚔️', 'How Comp Fight Works',
+            (
+                f"**Comp Fight on {label} Edition** is a live 1v1 duel queue — "
+                "no ELO math, no public lobby, just a clean ladder:\n\n"
+                "1️⃣ Click **Join Queue** on the panel and pick your platform.\n"
+                "2️⃣ Pick the game mode you want to fight in.\n"
+                "3️⃣ Enter your exact **Minecraft username**.\n"
+                "4️⃣ Pick your current/claimed **tier**.\n"
+                "5️⃣ The instant another player queues for the **same platform "
+                "+ gamemode**, you're both pulled out and a private **match "
+                "ticket** opens for just the two of you + staff.\n"
+                "6️⃣ Arrange a time, play your set, and staff will log the "
+                "result inside the ticket."
+            ),
+        ),
+        'tier_system': (
+            '📊', 'Tier System',
+            (
+                f"Comp Fight uses the same **High/Low split** tier structure "
+                "as Tier Testing:\n\n"
+                "🔺 **HT** = High Tier — the stronger half of a numbered tier\n"
+                "🔻 **LT** = Low Tier — the weaker half of a numbered tier\n\n"
+                "Default ladder (best → worst):\n"
+                "> `HT1 → LT1 → HT2 → LT2 → HT3 → LT3 → HT4 → LT4 → HT5 → LT5`\n\n"
+                "• Your tier is tracked **per gamemode** — you can hold a "
+                "different tier in each mode you've queued for.\n"
+                "• Staff can promote, demote, or leave your tier unchanged "
+                "after reporting a match result.\n"
+                "• This ladder is fully editable per-server, so the exact "
+                "tier names here may differ from what's configured now — "
+                "check `/compstats` for your real, current tier."
+            ),
+        ),
+        'queue_matchmaking': (
+            '📡', 'Queue & Matchmaking',
+            (
+                "• Queueing is scoped to **one platform + one gamemode** at "
+                "a time — you only get matched against someone queued for "
+                "the exact same combination.\n"
+                "• Matches are made **instantly**, first-come-first-served — "
+                "there's no waiting for a countdown or lobby to fill.\n"
+                "• You can leave the queue any time before you're matched.\n"
+                "• Once matched, a **private match ticket** is created — "
+                "visible only to the two players and staff — with both "
+                "players' IGN and claimed tier shown up front.\n"
+                "• A live **queue status** panel shows who's waiting for what "
+                "in real time."
+            ),
+        ),
+        'anti_dodge': (
+            '🚫', 'Anti-Dodge System',
+            (
+                "Queue dodging (no-showing a match you queued for) is tracked "
+                "automatically:\n\n"
+                f"• **{DODGE_THRESHOLD} no-shows** within a rolling "
+                f"**{DODGE_WINDOW_HOURS}-hour window** triggers a queue "
+                f"cooldown.\n"
+                f"• The cooldown blocks re-queueing for "
+                f"**{DODGE_COOLDOWN_MINUTES} minutes**.\n"
+                "• Staff can clear a cooldown early with `/compclearcooldown` "
+                "if it was triggered unfairly (e.g. a genuine disconnect).\n"
+                "• Repeated dodging is treated as ticket/queue abuse and can "
+                "lead to further punishment at staff discretion."
+            ),
+        ),
+        'match_results': (
+            '🏆', 'Match Results & Tier Roles',
+            (
+                "• Only **staff** can report a result inside a match ticket — "
+                "results aren't self-reported by players.\n"
+                "• A reported result updates both players' **win/loss "
+                "record**, **streak**, and — if staff choose to apply "
+                "tier changes — their **tier**.\n"
+                f"• Hit a streak of **{STREAK_FIRE_THRESHOLD}+** wins or "
+                "losses in a row and a 🔥/🧊 streak badge shows up next to "
+                "your name on the leaderboard.\n"
+                "• If your server has **Auto Tier Roles** configured, your "
+                "Discord role updates automatically to match your best "
+                "current tier the moment a result is logged.\n"
+                "• Check `/compstats`, `/compleaderboard`, and "
+                "`/comphistory` any time to see where you stand."
+            ),
+        ),
+        'seasons': (
+            '📅', 'Seasons',
+            (
+                "• Comp Fight runs in **seasons**. Staff can trigger a "
+                "**Season Reset** from `/compadminpanel` at any point.\n"
+                "• A reset archives every player's wins, losses, streak, and "
+                "tier from the current season, then resets everyone to "
+                "**Unranked** for a clean slate.\n"
+                "• This cannot be undone once confirmed, so seasons only "
+                "reset when staff explicitly choose to."
+            ),
+        ),
+    }
+
+
+TIER_INFO_CONTENT_COMP: dict[str, dict[str, tuple[str, str, str]]] = {
+    platform: _build_comp_info_content(platform) for platform in COMP_PLATFORMS
+}
+
+COMP_INFO_OPTIONS = [
+    ('How Comp Fight Works', 'how_it_works', '⚔️'),
+    ('Tier System', 'tier_system', '📊'),
+    ('Queue & Matchmaking', 'queue_matchmaking', '📡'),
+    ('Anti-Dodge System', 'anti_dodge', '🚫'),
+    ('Match Results & Tier Roles', 'match_results', '🏆'),
+    ('Seasons', 'seasons', '📅'),
+]
+
+_GENERAL_COMP_RULES: dict[str, tuple[str, str, str]] = {
+    'important_rules': (
+        '📌', 'Important Rules',
+        (
+            "**1.** Respect all opponents and staff at all times.\n"
+            "**2.** No harassment or toxicity of any kind.\n"
+            "**3.** No cheating, hacked clients, or unfair advantages.\n"
+            "**4.** Do not manipulate, fake, or pressure staff to change a "
+            "match result.\n"
+            "**5.** Queue for a match only if you can actually show up.\n"
+            "**6.** Always follow the official ruleset for your gamemode.\n"
+            "**7.** Follow all staff instructions inside a match ticket.\n"
+            "**8.** Staff may review any disputed match.\n"
+            "**9.** Submitting false evidence or fake results is prohibited.\n"
+            "**10.** Repeated queue dodging or ticket abuse is prohibited.\n\n"
+            "> ⚠️ Breaking these rules may result in a warning, queue ban, or "
+            "further punishment depending on severity."
+        ),
+    ),
+    'match_conduct_rules': (
+        '⚔️', 'Match Conduct Rules',
+        (
+            "• Both players must agree on a time to play within a "
+            "reasonable window after the match ticket opens.\n"
+            "• The **full set** counts toward the result — staff judge the "
+            "overall outcome, not a single round.\n"
+            "• Players must follow the rules of the selected gamemode for "
+            "the entire match.\n"
+            "• If evidence is needed for a dispute, the player raising it "
+            "must provide it (recording/screenshots).\n"
+            "• Report any interruption (disconnect, crash, etc.) to staff "
+            "immediately inside the ticket.\n"
+            "• Disconnects and technical issues are handled at **staff "
+            "discretion**.\n"
+            "• Suspicious activity during a match can cause it to be "
+            "paused, stopped, or reviewed before a result is logged."
+        ),
+    ),
+    'anti_dodge_rules': (
+        '🚫', 'Anti-Dodge Rules',
+        (
+            f"• Not showing up to a match you queued for counts as a "
+            f"**dodge**.\n"
+            f"• **{DODGE_THRESHOLD} dodges** within **{DODGE_WINDOW_HOURS} "
+            f"hours** locks you out of queueing for "
+            f"**{DODGE_COOLDOWN_MINUTES} minutes**.\n"
+            "• Queueing with no intention of playing, or queueing then "
+            "immediately leaving to avoid a specific opponent, is treated "
+            "the same as a dodge.\n"
+            "• If you were disconnected or had a genuine emergency, ask "
+            "staff to clear your cooldown — don't just re-queue and dodge "
+            "again."
+        ),
+    ),
+}
+
+# Flavor overrides for well-known gamemodes so the panel reads as hand-written
+# for the modes most servers actually use. Anything queued that ISN'T in this
+# dict (a custom mode an admin added from /compadminpanel) still gets a solid
+# rules entry via _generic_gamemode_rule_body() below — nothing ever shows a
+# blank or broken rules page.
+_GAMEMODE_RULE_OVERRIDES: dict[str, str] = {
+    'sword': (
+        "• No hacked clients — killaura, reach, or velocity modifications "
+        "are banned.\n"
+        "• Combos must be performed manually — no auto-clickers or macros.\n"
+        "• Knockback must match the server's default configuration.\n"
+        "• Blocking/shielding must be used fairly, not exploited via bugs."
+    ),
+    'axe': (
+        "• No hacked clients or auto-clicker macros.\n"
+        "• Standard axe knockback and cooldown settings apply — don't "
+        "modify client-side attack speed.\n"
+        "• Spacing and knockback control are the main skills evaluated."
+    ),
+    'nethpot': (
+        "• Standard NethPot kit and arena rules apply.\n"
+        "• No hacked clients, killaura, or auto-potting macros.\n"
+        "• Potion timing, combo consistency, and positioning are the main "
+        "skills evaluated."
+    ),
+    'dia_pot': (
+        "• Standard Dia Pot kit and arena rules apply.\n"
+        "• No hacked clients, killaura, or auto-potting macros.\n"
+        "• Diamond armor/tool durability management counts toward the "
+        "overall result, not just raw combos."
+    ),
+    'mace': (
+        "• Mace usage must follow the server's default enchant/wind-charge "
+        "ruleset — no illegal enchant stacking.\n"
+        "• No hacked clients or macro-assisted timing.\n"
+        "• Fall-damage combo setups must be performed legitimately."
+    ),
+    'spear_mace': (
+        "• Same ruleset as Mace, played with the Spear variant kit.\n"
+        "• No hacked clients or macro-assisted timing.\n"
+        "• Positioning and spacing around wind-charge setups are key "
+        "evaluation factors."
+    ),
+    'cart_pvp': (
+        "• Minecart placement/breaking must be done manually — no macros.\n"
+        "• No hacked clients or reach modifications.\n"
+        "• Standard Cart PvP arena and kit rules apply."
+    ),
+    'crystal': (
+        "• No hacked clients — killaura, autocrystal, or triggerbot are "
+        "banned.\n"
+        "• Crystal placement/breaking must be performed manually.\n"
+        "• Totem usage and crystal spacing are core evaluation factors."
+    ),
+    'smp_pvp': (
+        "• Standard SMP kit/gear rules apply — no illegal enchants.\n"
+        "• No hacked clients or auto-totem macros.\n"
+        "• Resource/gear management counts toward the overall result."
+    ),
+    'build_uhc': (
+        "• Building must be done manually — no schematics, macros, or "
+        "auto-build mods.\n"
+        "• No hacked clients, killaura, or x-ray.\n"
+        "• Both building speed/quality and combat count toward the result."
+    ),
+    'bedfight': (
+        "• Beds must be protected using legitimate methods only.\n"
+        "• No spawn-camping exploits or map/bug abuse.\n"
+        "• Bridging, clutching, and defending all count toward the overall "
+        "result.\n"
+        "• Breaking the enemy bed ends that round — staff still judge "
+        "performance across the full match.\n"
+        "• No teaming with a third party during a 1v1 match."
+    ),
+    'boxing': (
+        "• Fists only — no items unless the matchup specifies otherwise.\n"
+        "• No knockback or hit modifications of any kind.\n"
+        "• Standard arena boundaries apply; leaving the arena may forfeit "
+        "the round.\n"
+        "• No hacked clients or reach modifications."
+    ),
+    'nodebuff': (
+        "• Only Strength/Speed potions are used — no debuff (weakness/"
+        "slowness) effects.\n"
+        "• No hacked clients, killaura, or auto-potting macros.\n"
+        "• The standard NoDebuff kit and arena rules apply."
+    ),
+    'mlg_rush': (
+        "• MLG clutches (water bucket, etc.) must be performed manually.\n"
+        "• No hacked clients or auto-clutch macros.\n"
+        "• Standard Rush map and gear rules apply."
+    ),
+    'skywars': (
+        "• Standard SkyWars kit/loot rules apply for the arena in use.\n"
+        "• No hacked clients, x-ray, or auto-looting macros.\n"
+        "• Resource management and rotations count toward the result, not "
+        "just kills."
+    ),
+    'survival_games': (
+        "• Standard Survival Games loot/arena rules apply.\n"
+        "• No hacked clients or x-ray.\n"
+        "• Positioning, looting priorities, and combat all count toward "
+        "the overall result."
+    ),
+    'midfight': (
+        "• Standard MidFight kit and arena rules apply.\n"
+        "• No hacked clients or reach modifications.\n"
+        "• Rotation control and spacing at mid are key evaluation factors."
+    ),
+    'battle_rush': (
+        "• Standard Battle Rush kit/loot rules apply.\n"
+        "• No hacked clients or auto-looting macros.\n"
+        "• Objective play counts toward the result, not just kills."
+    ),
+    'bridge': (
+        "• Bridging/rushing must be done manually — no auto-bridge or "
+        "scaffold macros.\n"
+        "• No hacked clients or reach modifications.\n"
+        "• Goal defense and offense both count toward the overall result."
+    ),
+    'build': (
+        "• Building must be done manually — no schematics or auto-build "
+        "mods.\n"
+        "• No hacked clients.\n"
+        "• Speed and structural quality are the main evaluation factors."
+    ),
+    'cave_uhc': (
+        "• Standard Cave UHC kit and cave-generation rules apply.\n"
+        "• No hacked clients or x-ray.\n"
+        "• Resource gathering and combat both count toward the overall "
+        "result."
+    ),
+}
+
+
+def _generic_gamemode_rule_body(name: str) -> str:
+    """Fallback rules text for any gamemode without a hand-written override
+    above — covers custom modes an admin added from /compadminpanel so the
+    rules panel always has real content, never a blank page."""
+    return (
+        f"• No hacked clients, macros, or any unfair advantage while "
+        f"playing **{name}**.\n"
+        "• Follow the server's default kit/arena settings for this "
+        "gamemode unless staff say otherwise.\n"
+        "• The full set counts toward the result — staff judge the overall "
+        "performance, not a single moment.\n"
+        "• Report any bugs, disconnects, or suspicious activity to staff "
+        "immediately."
+    )
+
+
+def _comp_general_rule_embed(platform: str, key: str) -> discord.Embed:
+    emoji, title, body = _GENERAL_COMP_RULES[key]
+    e = discord.Embed(title=f'{emoji}  {title}', description=body,
+                       color=PURPLE, timestamp=datetime.now(timezone.utc))
+    e.set_footer(text=_comp_footer(platform))
+    return e
+
+
+async def _comp_gamemode_rule_embed(bot, guild_id: int, platform: str, slug: str) -> discord.Embed:
+    edition = COMP_PLATFORMS[platform]['edition']
+    gamemodes = await get_comp_gamemodes(bot, guild_id, edition)
+    match = next((gm for gm in gamemodes if _slugify(gm[0]) == slug), None)
+    if match is None:
+        return E.error(
+            'That gamemode is no longer configured on this server. '
+            'Ask an admin to re-post the rules panel.'
+        )
+    name, emoji = match
+    body = _GAMEMODE_RULE_OVERRIDES.get(slug, _generic_gamemode_rule_body(name))
+    e = discord.Embed(title=f'{emoji}  {name} Rules', description=body,
+                       color=PURPLE, timestamp=datetime.now(timezone.utc))
+    e.set_footer(text=_comp_footer(platform))
+    return e
+
+
+def _comp_info_embed(platform: str, key: str) -> discord.Embed:
+    emoji, title, body = TIER_INFO_CONTENT_COMP[platform][key]
+    e = discord.Embed(title=f'{emoji}  {title}', description=body,
+                       color=PURPLE, timestamp=datetime.now(timezone.utc))
+    e.set_footer(text=_comp_footer(platform))
+    return e
+
+
+async def _safe_ephemeral(interaction: discord.Interaction, embed: discord.Embed) -> None:
+    """Reply with an ephemeral embed no matter what state the interaction is
+    in — mirrors tier_test.py's helper of the same name so a slow client, a
+    double-click, or an already-expired interaction can never raise an
+    unhandled exception."""
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    except discord.NotFound:
+        pass
+    except discord.HTTPException:
+        logger.exception('[comp_info/comp_rules] failed to deliver ephemeral response')
+
+
+class CompInfoSelect(discord.ui.Select):
+    """Persistent select for a #comp-info panel. Content is static per
+    platform (built from the module's real tunables), so this survives bot
+    restarts as long as the matching view is re-registered via
+    bot.add_view() in CompFight.__init__."""
+
+    def __init__(self, platform: str):
+        self.platform = platform
+        options = [
+            discord.SelectOption(label=label, value=value, emoji=emoji)
+            for label, value, emoji in COMP_INFO_OPTIONS
+        ]
+        super().__init__(
+            placeholder=f"📂 Select a category to learn about {COMP_PLATFORMS[platform]['label']} Comp Fight...",
+            min_values=1, max_values=1,
+            options=options,
+            custom_id=f'comp_info:{platform}:select',
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            key = self.values[0]
+            embed = _comp_info_embed(self.platform, key)
+        except (IndexError, KeyError):
+            embed = E.error('That option is no longer available. Please try again.')
+        except Exception:
+            logger.exception('[comp_info] unexpected error building embed')
+            embed = E.error('Something went wrong loading that section. Please try again.')
+        await _safe_ephemeral(interaction, embed)
+
+
+class CompInfoView(discord.ui.View):
+    """Public, permanent panel for a #comp-info channel — a single Select
+    Menu scoped to one platform (Bedrock or Java)."""
+
+    def __init__(self, platform: str):
+        super().__init__(timeout=None)
+        self.add_item(CompInfoSelect(platform))
+
+
+class CompRulesSelect(discord.ui.Select):
+    """Persistent select for a #comp-rules panel, scoped to one platform.
+    `options` is passed in fresh at post-time (built from that server's
+    live comp_gamemodes) — but the callback always re-resolves gamemode
+    values from the database rather than trusting self.options, so this
+    keeps working correctly even after a bot restart re-registers the view
+    with only its generic fallback options."""
+
+    def __init__(self, bot, platform: str, options: list[discord.SelectOption]):
+        self.bot = bot
+        self.platform = platform
+        super().__init__(
+            placeholder=f"📂 Select a category to view {COMP_PLATFORMS[platform]['label']} rules...",
+            min_values=1, max_values=1,
+            options=options,
+            custom_id=f'comp_rules:{platform}:select',
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            key = self.values[0]
+            if key in _GENERAL_COMP_RULES:
+                embed = _comp_general_rule_embed(self.platform, key)
+            else:
+                embed = await _comp_gamemode_rule_embed(self.bot, interaction.guild_id, self.platform, key)
+        except (IndexError, KeyError):
+            embed = E.error('That option is no longer available. Please try again.')
+        except Exception:
+            logger.exception('[comp_rules] unexpected error building embed')
+            embed = E.error('Something went wrong loading that section. Please try again.')
+        await _safe_ephemeral(interaction, embed)
+
+
+def _comp_rules_general_options() -> list[discord.SelectOption]:
+    return [
+        discord.SelectOption(label='Important Rules', value='important_rules', emoji='📌',
+                              description='Server-wide conduct rules'),
+        discord.SelectOption(label='Match Conduct Rules', value='match_conduct_rules', emoji='⚔️',
+                              description='How matches must be played'),
+        discord.SelectOption(label='Anti-Dodge Rules', value='anti_dodge_rules', emoji='🚫',
+                              description='Queue dodging & cooldowns'),
+    ]
+
+
+async def build_comp_rules_options(bot, guild_id: int, platform: str) -> list[discord.SelectOption]:
+    """General rule options + up to 22 of this server's live gamemodes for
+    that platform (Discord caps a select at 25 options total)."""
+    options = _comp_rules_general_options()
+    edition = COMP_PLATFORMS[platform]['edition']
+    gamemodes = await get_comp_gamemodes(bot, guild_id, edition)
+    for name, emoji in gamemodes[:22]:
+        options.append(discord.SelectOption(
+            label=name[:100], value=_slugify(name),
+            emoji=emoji or None, description=f'{name} match rules'[:100],
+        ))
+    return options
+
+
+class CompRulesView(discord.ui.View):
+    """Public, permanent panel for a #comp-rules channel — a single Select
+    Menu scoped to one platform (Bedrock or Java)."""
+
+    def __init__(self, bot, platform: str, options: list[discord.SelectOption]):
+        super().__init__(timeout=None)
+        self.add_item(CompRulesSelect(bot, platform, options))
+
+
+def comp_info_panel_embed(platform: str) -> discord.Embed:
+    label = COMP_PLATFORMS[platform]['label']
+    e = discord.Embed(
+        title=f'🏆 {label} Comp Fight Information',
+        description=(
+            f'Welcome to the {label} Comp Fight system.\n'
+            'Select a category below to learn how the queue, tiers, '
+            'anti-dodge system, and match results all work.'
+        ),
+        color=PURPLE,
+        timestamp=datetime.now(timezone.utc),
+    )
+    e.set_footer(text=_comp_footer(platform))
+    return e
+
+
+def comp_rules_panel_embed(platform: str) -> discord.Embed:
+    label = COMP_PLATFORMS[platform]['label']
+    e = discord.Embed(
+        title=f'📜 {label} Comp Fight Rules',
+        description=f'Select a category below to view the rules for {label} '
+                     'Comp Fight matches.',
+        color=PURPLE,
+        timestamp=datetime.now(timezone.utc),
+    )
+    e.set_footer(text=_comp_footer(platform))
+    return e
+
+
+async def post_comp_info_panel(bot, interaction: discord.Interaction, platform: str) -> None:
+    """Shared by /sendcompinfo, /sendcompinfojava, and the admin panel's
+    Info & Rules button."""
+    label = COMP_PLATFORMS[platform]['label']
+    if interaction.channel is None or not hasattr(interaction.channel, 'send'):
+        return await _safe_ephemeral(interaction, E.error('This command can only be used in a text channel.'))
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        # Sent as a plain channel message so Discord never tags it with
+        # "Username used /sendcompinfo..." publicly above the panel.
+        await interaction.channel.send(embed=comp_info_panel_embed(platform), view=CompInfoView(platform))
+    except discord.Forbidden:
+        return await interaction.followup.send(embed=E.error("I don't have permission to send messages in this channel."), ephemeral=True)
+    except discord.HTTPException:
+        logger.exception('[sendcompinfo] failed to send panel')
+        return await interaction.followup.send(embed=E.error(f'Failed to send the {label} Comp Info panel. Please try again.'), ephemeral=True)
+    await interaction.followup.send(embed=E.success(f'{label} Comp Fight Information panel posted.'), ephemeral=True)
+
+
+async def post_comp_rules_panel(bot, interaction: discord.Interaction, platform: str) -> None:
+    """Shared by /sendcomprules, /sendcomprulesjava, and the admin panel's
+    Info & Rules button."""
+    label = COMP_PLATFORMS[platform]['label']
+    if interaction.channel is None or not hasattr(interaction.channel, 'send'):
+        return await _safe_ephemeral(interaction, E.error('This command can only be used in a text channel.'))
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        options = await build_comp_rules_options(bot, interaction.guild_id, platform)
+        await interaction.channel.send(embed=comp_rules_panel_embed(platform), view=CompRulesView(bot, platform, options))
+    except discord.Forbidden:
+        return await interaction.followup.send(embed=E.error("I don't have permission to send messages in this channel."), ephemeral=True)
+    except discord.HTTPException:
+        logger.exception('[sendcomprules] failed to send panel')
+        return await interaction.followup.send(embed=E.error(f'Failed to send the {label} Comp Rules panel. Please try again.'), ephemeral=True)
+    await interaction.followup.send(embed=E.success(f'{label} Comp Fight Rules panel posted.'), ephemeral=True)
+
+
+class CompInfoRulesPostView(discord.ui.View):
+    """Opened from the admin panel's Info & Rules button — posts any of the
+    4 static info/rules panels straight into the current channel without
+    needing to remember the slash command names."""
+
+    def __init__(self, bot):
+        super().__init__(timeout=300)
+        self.bot = bot
+
+    @discord.ui.button(label='Send Bedrock Info', emoji='🟦', style=discord.ButtonStyle.secondary, row=0)
+    async def send_bedrock_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await post_comp_info_panel(self.bot, interaction, 'bedrock')
+
+    @discord.ui.button(label='Send Bedrock Rules', emoji='🟦', style=discord.ButtonStyle.secondary, row=0)
+    async def send_bedrock_rules(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await post_comp_rules_panel(self.bot, interaction, 'bedrock')
+
+    @discord.ui.button(label='Send Java Info', emoji='🟩', style=discord.ButtonStyle.secondary, row=1)
+    async def send_java_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await post_comp_info_panel(self.bot, interaction, 'java')
+
+    @discord.ui.button(label='Send Java Rules', emoji='🟩', style=discord.ButtonStyle.secondary, row=1)
+    async def send_java_rules(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await post_comp_rules_panel(self.bot, interaction, 'java')
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  QUEUE FLOW — Edition → Gamemode → Username modal → Tier select → Queue
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1827,6 +2432,16 @@ class CompAdminPanelView(discord.ui.View):
                           color=ORANGE),
             view=SeasonResetConfirmView(self.bot), ephemeral=True)
 
+    @discord.ui.button(label='Info & Rules', emoji='📜', style=discord.ButtonStyle.secondary, row=4)
+    async def info_and_rules(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=E.base('📜  Comp Info & Rules Panels',
+                          'Post any of the public Comp Fight information/rules panels into '
+                          '**this channel**. These are the same panels players can browse any '
+                          'time to learn how the system works and what the rules are.',
+                          color=PURPLE),
+            view=CompInfoRulesPostView(self.bot), ephemeral=True)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  COG
@@ -1837,6 +2452,16 @@ class CompFight(commands.Cog, name='CompFight'):
         self.bot = bot
         bot.add_view(CompQueuePanelView(bot))
         bot.add_view(MatchTicketControlView(bot))
+        # Comp Info / Comp Rules panels are re-registered for persistence on
+        # every restart. Info is fully static so this is its real content;
+        # Rules is registered with just its generic fallback options purely
+        # for interaction routing — the callback always re-resolves gamemode
+        # values live from the database, so this stays correct even though
+        # the actually-posted message may show a different, per-guild set
+        # of gamemode options than this placeholder does.
+        for platform in COMP_PLATFORMS:
+            bot.add_view(CompInfoView(platform))
+            bot.add_view(CompRulesView(bot, platform, _comp_rules_general_options()))
 
     @app_commands.command(name='comppanel', description='(Admin/Owner only) Post the Comp Fight queue panel.')
     async def comppanel(self, interaction: discord.Interaction):
@@ -1925,6 +2550,34 @@ class CompFight(commands.Cog, name='CompFight'):
             return
         await clear_cooldown(self.bot, interaction.guild_id, member.id)
         await interaction.response.send_message(embed=E.success(f'Cleared {member.mention}\'s queue cooldown.'), ephemeral=True)
+
+    # ── /sendcompinfo — post the permanent BEDROCK Comp Info panel ────────────
+    @app_commands.command(name='sendcompinfo', description='(Admin/Owner only) Post the permanent Bedrock Comp Fight Information panel in this channel.')
+    async def sendcompinfo(self, interaction: discord.Interaction):
+        if not await require_admin_or_owner(self.bot, interaction):
+            return
+        await post_comp_info_panel(self.bot, interaction, 'bedrock')
+
+    # ── /sendcomprules — post the permanent BEDROCK Comp Rules panel ──────────
+    @app_commands.command(name='sendcomprules', description='(Admin/Owner only) Post the permanent Bedrock Comp Fight Rules panel in this channel.')
+    async def sendcomprules(self, interaction: discord.Interaction):
+        if not await require_admin_or_owner(self.bot, interaction):
+            return
+        await post_comp_rules_panel(self.bot, interaction, 'bedrock')
+
+    # ── /sendcompinfojava — post the permanent JAVA Comp Info panel ───────────
+    @app_commands.command(name='sendcompinfojava', description='(Admin/Owner only) Post the permanent Java Comp Fight Information panel in this channel.')
+    async def sendcompinfojava(self, interaction: discord.Interaction):
+        if not await require_admin_or_owner(self.bot, interaction):
+            return
+        await post_comp_info_panel(self.bot, interaction, 'java')
+
+    # ── /sendcomprulesjava — post the permanent JAVA Comp Rules panel ─────────
+    @app_commands.command(name='sendcomprulesjava', description='(Admin/Owner only) Post the permanent Java Comp Fight Rules panel in this channel.')
+    async def sendcomprulesjava(self, interaction: discord.Interaction):
+        if not await require_admin_or_owner(self.bot, interaction):
+            return
+        await post_comp_rules_panel(self.bot, interaction, 'java')
 
 
 async def setup(bot):
