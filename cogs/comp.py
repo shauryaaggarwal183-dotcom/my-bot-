@@ -1744,6 +1744,24 @@ class CompAdminPanelView(discord.ui.View):
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._refresh(interaction)
 
+    @discord.ui.button(label='Save Changes', emoji='💾', style=discord.ButtonStyle.success, row=0)
+    async def save_changes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Same as Tier Testing's admin panel: every control here already
+        # writes straight to the database the instant you use it. This is
+        # an explicit confirmation step — it re-reads everything fresh
+        # from the database and refreshes the panel to prove nothing was
+        # lost, then confirms it to you.
+        settings = await get_comp_settings(self.bot, interaction.guild_id)
+        java_gm = await get_comp_gamemodes(self.bot, interaction.guild_id, 'Java Edition')
+        bedrock_gm = await get_comp_gamemodes(self.bot, interaction.guild_id, 'Bedrock Edition')
+        tiers = await get_comp_tiers(self.bot, interaction.guild_id)
+        active = await get_active_matches(self.bot, interaction.guild_id)
+        queue = await get_full_queue(self.bot, interaction.guild_id)
+        tier_roles = await get_tier_roles(self.bot, interaction.guild_id)
+        embed = comp_admin_embed(interaction.guild, settings, java_gm, bedrock_gm, tiers, len(active), len(queue), len(tier_roles))
+        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.followup.send(embed=E.success('✅ All changes are saved and up to date.'), ephemeral=True)
+
     # Row 1 — gamemodes + tiers
     @discord.ui.button(label='Java Gamemodes', emoji='🎮', style=discord.ButtonStyle.secondary, row=1)
     async def manage_java(self, interaction: discord.Interaction, button: discord.ui.Button):

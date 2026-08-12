@@ -177,6 +177,13 @@ async def _ensure_tier_table(bot):
             ('bedrock_log_channel_id', 'INTEGER'),
             ('bedrock_close_log_channel_id', 'INTEGER'),
             ('bedrock_ticket_category_id', 'INTEGER'),
+            # The role that marks someone as an official Tier Tester —
+            # configurable from /tieradminpanel and grantable/revokable to
+            # any member right from the same panel (no separate command
+            # needed). Fully independent from ping_role_id (which just
+            # pings on new tickets) and from the support ticket system's
+            # own support_role_ids.
+            ('tester_role_id', 'INTEGER'),
         ):
             try:
                 await db.execute(f'ALTER TABLE tier_settings ADD COLUMN {col} {coltype}')
@@ -231,6 +238,7 @@ async def get_tier_settings(bot, guild_id: int) -> dict:
         'bedrock_log_channel_id': None,
         'bedrock_close_log_channel_id': None,
         'bedrock_ticket_category_id': None,
+        'tester_role_id': None,
     }
 
 
@@ -352,6 +360,18 @@ async def set_tier_ticket_category(bot, guild_id: int, category_id: int | None):
         await _apply_pragmas(db)
         await db.execute('INSERT OR IGNORE INTO tier_settings (guild_id) VALUES (?)', (guild_id,))
         await db.execute('UPDATE tier_settings SET ticket_category_id = ? WHERE guild_id = ?', (category_id, guild_id))
+        await db.commit()
+
+
+async def set_tier_tester_role(bot, guild_id: int, role_id: int | None):
+    """The role that marks a member as an official Tier Tester. Purely a
+    settings value here — granting/revoking it on actual members happens
+    in TierAssignTesterView, right from /tieradminpanel."""
+    await _ensure_tier_table(bot)
+    async with _connect(bot) as db:
+        await _apply_pragmas(db)
+        await db.execute('INSERT OR IGNORE INTO tier_settings (guild_id) VALUES (?)', (guild_id,))
+        await db.execute('UPDATE tier_settings SET tester_role_id = ? WHERE guild_id = ?', (role_id, guild_id))
         await db.commit()
 
 
@@ -985,7 +1005,13 @@ def tier_admin_embed(guild: discord.Guild, settings: dict,
         value=f'<#{ticket_cat_id}>' if ticket_cat_id else '_Not set — using ticket system default_',
         inline=True
     )
-    e.add_field(name='\u200b', value='\u200b', inline=True)
+
+    tester_role_id = settings.get('tester_role_id')
+    e.add_field(
+        name='🎖️  Tester Role',
+        value=f'<@&{tester_role_id}>' if tester_role_id else '_Not set — configure it below to start assigning testers_',
+        inline=True
+    )
 
     e.add_field(
         name='🟩  Java Channels',
@@ -1372,6 +1398,101 @@ class TierTicketCategoryView(discord.ui.View):
             ephemeral=True)
 
 
+class TierTesterRoleView(discord.ui.View):
+    """Lets an admin pick WHICH role counts as the official 'Tier Tester'
+    role. This is only the configuration step — actually granting/revoking
+    it on members happens in TierAssignTesterView below. Independent from
+    ping_role_id (pings on new tickets) and from the support ticket
+    system's own support_role_ids."""
+
+    def __init__(self, bot):
+        super().__init__(timeout=180)
+        self.bot = bot
+
+    @discord.ui.select(
+        cls=discord.ui.RoleSelect,
+        placeholder='🎖️  Select the role that marks someone as a Tester…',
+        row=0,
+    )
+    async def role_select(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        role = select.values[0] if select.values else None
+        await set_tier_tester_role(self.bot, interaction.guild_id, role.id if role else None)
+        mention = role.mention if role else 'Not set'
+        await interaction.response.send_message(
+            embed=E.success(f'Tester Role set to {mention}. Use **Assign Tester Role** on the admin panel to grant/revoke it on members.'),
+            ephemeral=True)
+
+    @discord.ui.button(label='Clear Tester Role', emoji='🧹', style=discord.ButtonStyle.danger, row=1)
+    async def clear_role(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await set_tier_tester_role(self.bot, interaction.guild_id, None)
+        await interaction.response.send_message(
+            embed=E.success('Tester Role cleared — no role is configured as the Tester Role now.'), ephemeral=True)
+
+
+class TierAssignTesterView(discord.ui.View):
+    """Grant or revoke the configured Tester Role on any member, right from
+    /tieradminpanel — no separate slash command needed. Selecting a member
+    toggles the role: adds it if they don't have it, removes it if they
+    do, and reports back exactly what happened."""
+
+    def __init__(self, bot, tester_role_id: int | None):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.tester_role_id = tester_role_id
+        if not tester_role_id:
+            self.member_select.disabled = True
+            self.member_select.placeholder = '⚠️  Set a Tester Role first (use Set Tester Role)'
+
+    @discord.ui.select(
+        cls=discord.ui.UserSelect,
+        placeholder='🎖️  Select a member to grant/revoke Tester status…',
+        row=0,
+    )
+    async def member_select(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        if not self.tester_role_id:
+            return await interaction.response.send_message(
+                embed=E.error('No Tester Role is configured yet. Use **Set Tester Role** first.'), ephemeral=True)
+
+        role = interaction.guild.get_role(self.tester_role_id)
+        if not role:
+            return await interaction.response.send_message(
+                embed=E.error('The configured Tester Role no longer exists on this server. Set a new one.'),
+                ephemeral=True)
+
+        member = select.values[0]
+        if not isinstance(member, discord.Member):
+            member = interaction.guild.get_member(member.id)
+        if member is None:
+            return await interaction.response.send_message(
+                embed=E.error('Could not find that member in this server.'), ephemeral=True)
+
+        me = interaction.guild.me
+        if not me.guild_permissions.manage_roles or role >= me.top_role:
+            return await interaction.response.send_message(
+                embed=E.error(
+                    f'I can\'t manage {role.mention} — make sure my role is positioned **above** it '
+                    'and that I have the **Manage Roles** permission.'),
+                ephemeral=True)
+
+        try:
+            if role in member.roles:
+                await member.remove_roles(role, reason=f'Tester role revoked via /tieradminpanel by {interaction.user}')
+                await interaction.response.send_message(
+                    embed=E.success(f'Removed {role.mention} from {member.mention} — no longer a Tier Tester.'),
+                    ephemeral=True)
+            else:
+                await member.add_roles(role, reason=f'Tester role assigned via /tieradminpanel by {interaction.user}')
+                await interaction.response.send_message(
+                    embed=E.success(f'Assigned {role.mention} to {member.mention} — they are now a Tier Tester! 🎖️'),
+                    ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                embed=E.error('I don\'t have permission to edit that member\'s roles.'), ephemeral=True)
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                embed=E.error('Something went wrong updating that member\'s roles. Please try again.'), ephemeral=True)
+
+
 class TierAdminPanelView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=300)
@@ -1402,6 +1523,22 @@ class TierAdminPanelView(discord.ui.View):
     @discord.ui.button(label='Refresh', emoji='🔄', style=discord.ButtonStyle.secondary, row=0)
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._refresh(interaction)
+
+    @discord.ui.button(label='Save Changes', emoji='💾', style=discord.ButtonStyle.success, row=0)
+    async def save_changes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Every control on this panel already writes straight to the
+        # database the moment you use it — nothing here is held in memory
+        # first. This button exists as an explicit confirmation step: it
+        # re-reads everything fresh from the database (so you can be
+        # 100% sure nothing was lost) and refreshes the panel to prove it.
+        settings = await get_tier_settings(self.bot, interaction.guild_id)
+        java_gm = await get_gamemodes(self.bot, interaction.guild_id, 'Java Edition')
+        bedrock_gm = await get_gamemodes(self.bot, interaction.guild_id, 'Bedrock Edition')
+        ticket_settings = await self.bot.db.get_settings(interaction.guild_id) or {}
+        default_cd = ticket_settings.get('cooldown_seconds', 300)
+        embed = tier_admin_embed(interaction.guild, settings, java_gm, bedrock_gm, default_cd)
+        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.followup.send(embed=E.success('✅ All changes are saved and up to date.'), ephemeral=True)
 
     # ── Row 1: gamemode management ──────────────────────────────────────────
     @discord.ui.button(label='Java Gamemodes', emoji='🎮', style=discord.ButtonStyle.secondary, row=1)
@@ -1496,6 +1633,43 @@ class TierAdminPanelView(discord.ui.View):
                 color=PURPLE
             ),
             view=TierTicketCategoryView(self.bot),
+            ephemeral=True
+        )
+
+    @discord.ui.button(label='Set Tester Role', emoji='🎖️', style=discord.ButtonStyle.secondary, row=4)
+    async def set_tester_role(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=E.base(
+                '🎖️  Tier Tester — Tester Role',
+                'Pick the role that marks a member as an **official Tier '
+                'Tester** (e.g. `@Tier Tester`).\n\n'
+                'This is just the configuration step. Once set, use '
+                '**Assign Tester Role** on the admin panel to actually '
+                'grant or revoke it on specific members.\n\n'
+                'Fully independent from the Ticket Ping Role and from the '
+                'support ticket system\'s own support roles.',
+                color=PURPLE
+            ),
+            view=TierTesterRoleView(self.bot),
+            ephemeral=True
+        )
+
+    @discord.ui.button(label='Assign Tester Role', emoji='✅', style=discord.ButtonStyle.primary, row=4)
+    async def assign_tester_role(self, interaction: discord.Interaction, button: discord.ui.Button):
+        settings = await get_tier_settings(self.bot, interaction.guild_id)
+        tester_role_id = settings.get('tester_role_id')
+        role = interaction.guild.get_role(tester_role_id) if tester_role_id else None
+        desc = (
+            f'Select a member below to **grant or revoke** {role.mention} '
+            'for them.\n\nIf they already have the role, selecting them '
+            'removes it. If they don\'t, selecting them adds it.'
+            if role else
+            'No Tester Role is configured yet. Use **Set Tester Role** '
+            'first, then come back here to assign it to members.'
+        )
+        await interaction.response.send_message(
+            embed=E.base('✅  Assign / Revoke Tester Role', desc, color=PURPLE),
+            view=TierAssignTesterView(self.bot, tester_role_id),
             ephemeral=True
         )
 
