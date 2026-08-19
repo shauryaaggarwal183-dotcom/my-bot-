@@ -906,7 +906,7 @@ async def tier_panel_embed(bot, guild: discord.Guild) -> discord.Embed:
         title=f'{guild.name} — Tier Tester Applications',
         description=(
             f'Want to **become a Tier Tester** at **{guild.name}**? '
-            'Test other players and help assign them their tier.\n'
+            'Test other players and help assign them thir tier.\n'
             'Click the button below to apply — pick **Bedrock** or **Java**.'
         ),
         color=PURPLE,
@@ -933,9 +933,9 @@ async def tier_test_panel_embed(bot, guild: discord.Guild) -> discord.Embed:
     cooldown_text = format_cooldown_period(cooldown)
 
     e = discord.Embed(
-        title=f'{guild.name} — 📝 Evaluation Testing Waitlist',
+        title=f'{guild.name} — Tier Testing',
         description='Apply for a Bedrock or Java tier test. Click the button below to get started.',
-        color=PURPLE,
+        color=BLUE,
         timestamp=datetime.now(timezone.utc)
     )
     if guild.icon:
