@@ -935,7 +935,7 @@ async def tier_test_panel_embed(bot, guild: discord.Guild) -> discord.Embed:
     e = discord.Embed(
         title=f'{guild.name} — Tier Testing',
         description='Apply for a Bedrock or Java tier test. Click the button below to get started.',
-        color=BLUE,
+        color=PURPLE,
         timestamp=datetime.now(timezone.utc)
     )
     if guild.icon:
