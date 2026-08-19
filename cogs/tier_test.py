@@ -933,7 +933,7 @@ async def tier_test_panel_embed(bot, guild: discord.Guild) -> discord.Embed:
     cooldown_text = format_cooldown_period(cooldown)
 
     e = discord.Embed(
-        title=f'{guild.name} — Tier Testing',
+        title=f'{guild.name} — 📝 Evaluation Testing Waitlist',
         description='Apply for a Bedrock or Java tier test. Click the button below to get started.',
         color=PURPLE,
         timestamp=datetime.now(timezone.utc)
